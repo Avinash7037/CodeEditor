@@ -36,10 +36,21 @@ export default function socketHandler(io) {
       };
 
       await redis.hset(`room:${roomId}:users`, socket.id, JSON.stringify(user));
-
       socket.join(roomId);
 
       callback({ success: true });
+    });
+
+    // SEND EXISTING CODE TO NEW USER
+    socket.on("get-code", async ({ roomId }, callback) => {
+      const code = await redis.get(`room:${roomId}:code`);
+      callback({ code: code || "" });
+    });
+
+    // CODE CHANGE EVENT
+    socket.on("code-change", async ({ roomId, code }) => {
+      await redis.set(`room:${roomId}:code`, code);
+      socket.to(roomId).emit("code-update", { code });
     });
 
     // DISCONNECT
