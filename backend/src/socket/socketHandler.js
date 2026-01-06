@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import redis from "../utils/redis.js";
 
-// helper function to send updated user list to room
+// helper: send updated users list to everyone in room
 async function sendUsersInRoom(io, roomId) {
   const users = await redis.hgetall(`room:${roomId}:users`);
   const userList = Object.values(users).map((u) => JSON.parse(u));
@@ -12,7 +12,7 @@ export default function socketHandler(io) {
   io.on("connection", (socket) => {
     console.log("Socket connected:", socket.id);
 
-    // track which room this socket belongs to
+    // track current room of socket
     socket.currentRoom = null;
 
     // ================= CREATE ROOM =================
@@ -24,14 +24,14 @@ export default function socketHandler(io) {
         username,
       };
 
-      // store user & initial code in redis
+      // store user & initial data
       await redis.hset(`room:${roomId}:users`, socket.id, JSON.stringify(user));
       await redis.set(`room:${roomId}:code`, "");
 
       socket.join(roomId);
       socket.currentRoom = roomId;
 
-      // send updated user list
+      // send users list
       await sendUsersInRoom(io, roomId);
 
       callback({ roomId });
@@ -55,8 +55,13 @@ export default function socketHandler(io) {
       socket.join(roomId);
       socket.currentRoom = roomId;
 
-      // send updated user list
+      // send users list
       await sendUsersInRoom(io, roomId);
+
+      // send previous chat messages
+      const messages = await redis.lrange(`room:${roomId}:chat`, 0, -1);
+      const chatHistory = messages.map((msg) => JSON.parse(msg));
+      socket.emit("chat-history", chatHistory);
 
       callback({ success: true });
     });
@@ -72,8 +77,23 @@ export default function socketHandler(io) {
       // save latest code
       await redis.set(`room:${roomId}:code`, code);
 
-      // broadcast to other users
+      // broadcast to others
       socket.to(roomId).emit("code-update", { code });
+    });
+
+    // ================= CHAT MESSAGE =================
+    socket.on("send-message", async ({ roomId, username, message }) => {
+      const chatMessage = {
+        username,
+        message,
+        time: new Date().toLocaleTimeString(),
+      };
+
+      // store chat in redis
+      await redis.rpush(`room:${roomId}:chat`, JSON.stringify(chatMessage));
+
+      // broadcast chat to room
+      io.to(roomId).emit("receive-message", chatMessage);
     });
 
     // ================= DISCONNECT =================
